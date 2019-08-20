@@ -9,15 +9,6 @@
 // define the activation method ABP or OTAA
 #define ACT_METHOD_OTAA
 
-/* **************************************************************
-* keys for device
-* *************************************************************/
-// The 2 below should be in little endian format (lsb)
-static const uint8_t PROGMEM DEVEUI[8]= { 0x43, 0x03, 0xCA, 0x6E, 0xF5, 0x7C, 0xD7, 0x00 };
-static const uint8_t PROGMEM APPEUI[8]= { 0x7E, 0x0E, 0x02, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };
-// This should be in big endian format (msb)
-static const uint8_t PROGMEM APPKEY[16] = { 0xDF, 0xD6, 0x19, 0x00, 0x78, 0x3B, 0xD1, 0xB1, 0x90, 0x43, 0x95, 0xB6, 0xDC, 0x7F, 0xF9, 0x17 };
-
 #include "euis.h"
 
 /* **************************************************************
