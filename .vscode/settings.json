@@ -1,0 +1,6 @@
+{
+    "terminal.integrated.env.linux": {
+        "PATH": "/home/stormaes/.platformio/penv/bin:/home/stormaes/.platformio/penv:/home/stormaes/go/bin:/home/stormaes/.gem/ruby/2.5.0/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl:/opt/cuda/bin:/home/stormaes/.gem/ruby/2.2.0/bin:/home/stormaes/.npm-global/bin:/home/stormaes/.platformio/penv/bin",
+        "PLATFORMIO_CALLER": "vscode"
+    }
+}
