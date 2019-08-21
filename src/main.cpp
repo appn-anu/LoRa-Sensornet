@@ -80,6 +80,7 @@ unsigned long send_every = 1;
 unsigned long cycle = -1;  //  init at -1, so first cycle starts as cycle 0 for 1st sense/send
 unsigned long prevSleep = 0; 
 
+bool no_sensor = true;
 
 /* **************************************************************
  * sensor code, typical would be init_sensor(), do_sense(), build_data()
@@ -97,6 +98,9 @@ void init_sensor() {
     Serial.println(sensor.getAddress(),HEX);
     Serial.print("Sensor Firmware version: ");
     Serial.println(sensor.getVersion(),HEX);
+    if (sensor.getVersion() != 0xFF) {
+      no_sensor = false;
+    }
     Serial.println();
   #endif  
 }
@@ -209,12 +213,6 @@ void do_sleep(float sleepTime) {
  * init the Node
  * *************************************************************/
 void init_node() {
-  #ifdef VCC_ENABLE
-     // For Pinoccio Scout boards
-     pinMode(VCC_ENABLE, OUTPUT);
-     digitalWrite(VCC_ENABLE, HIGH);
-     delay(1000);
-  #endif
 
   // LMIC init
   os_init();
@@ -344,15 +342,19 @@ void onEvent (ev_t ev) {
 void loop() {
   // next cycle
   cycle += 1;
-  
-  // check if we need to sense
-  if ( (cycle % sense_every) == 0 ) { do_sense(); }
+  unsigned long current = millis(); 
+  if ( !no_sensor ){
+    // check if we need to sense
+    if ( (cycle % sense_every) == 0 ) { do_sense(); }
 
-  // check if need to send
-  if ( (cycle % send_every) == 0 ) { build_data(); do_send(); }
+    // check if need to send
+    if ( (cycle % send_every) == 0 ) { build_data(); do_send(); }
+  }else{
+    Serial.println("No chirp sensor connected");
+  }
   
   // go to sleep
-  unsigned long current = millis();
+  current = millis();
   do_sleep(cycle_length - (current - prevSleep));  // sleep minus elapsed time
   prevSleep = current;
 }
