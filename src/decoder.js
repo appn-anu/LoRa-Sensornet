@@ -1,22 +1,5 @@
 // decoder.js 
 // ttn decoder for this application
-/*
-void build_data() {
-  size_t n = 0;
-  dataTX[n++] = lowByte(batt_mV);
-  dataTX[n++] = highByte(batt_mV);
-  dataTX[n++] = lowByte(light);
-  dataTX[n++] = highByte(light);
-  uint16_t payloadTemp = LMIC_f2sflt16(tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
-  dataTX[n++] = lowByte(payloadTemp);
-  dataTX[n++] = highByte(payloadTemp);
-  dataTX[n++] = lowByte(moisture);
-  dataTX[n++] = highByte(moisture);
-}
-*/
-// light:15 temp:23.60 moisture:240 battery:4473
-
-// 79110F008D6FF0
 
 function sflt162f(rawSflt16){
     // rawSflt16 is the 2-byte number decoded from wherever;
@@ -57,20 +40,48 @@ function sflt162f(rawSflt16){
     var f_unscaled = sSign * mant1 * Math.pow(2, exp1 - 15);
 
     return f_unscaled;
-    }
+}
+
+var payload_types = {
+    PAYLOAD_NONE: 0x0,
+    PAYLOAD_MV_ONLY: 1,
+    PAYLOAD_SOIL: 2,
+    PAYLOAD_AIR: 3,
+    PAYLOAD_SOIL_AND_AIR: 4
+};
 
 function Decoder(bytes, port) {
     // Decode an uplink message from a buffer
     // (array) of bytes to an object of fields.
 
-    
-    var decoded = {
-        batt_mV     : bytes[0] + bytes[1] * 256,
-        light       : bytes[2] + bytes[3] * 256,
-        tempC       : sflt162f(bytes[4] + bytes[5] *256) * 100.0,
-        moisture    : bytes[6] + bytes[7] * 256
-    };
-    
+    var decoded = {};
+
+    var payload_type = bytes[0];
+    var n = 1
+    if (payload_type != payload_types.PAYLOAD_NONE){
+        decoded.batt_mV = bytes[n++] + bytes[n++] * 256;    
+    }
+
+    if (payload_type == payload_types.PAYLOAD_SOIL){
+        decoded.light         = bytes[n++] + bytes[n++] * 256;
+        decoded.soil_tempC    = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0,
+        decoded.soil_moisture = bytes[n++] + bytes[n++] * 256
+    }
+
+    if (payload_type == payload_types.PAYLOAD_AIR){
+        decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
+        decoded.air_relativehumidity = sflt162f(bytes[n++] + bytes[n++] *256) * 1000.0;
+        decoded.air_pressureP        = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;
+    }
+
+    if (payload_type == payload_types.PAYLOAD_SOIL_AND_AIR){
+        decoded.light                = bytes[n++] + bytes[n++] * 256;
+        decoded.soil_tempC           = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
+        decoded.soil_moisture        = bytes[n++] + bytes[n++] * 256;
+        decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
+        decoded.air_relativehumidity = sflt162f(bytes[n++] + bytes[n++] *256) * 1000.0;
+        decoded.air_pressurehPa      = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;
+    }
 
     return decoded;
-  }
+}

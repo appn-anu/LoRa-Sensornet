@@ -63,12 +63,26 @@ const lmic_pinmap lmic_pins = {
 
 I2CSoilMoistureSensor sensor;
 
-float tempC;
-unsigned int moisture;  // 
-unsigned int light;     // light on a scale from 0 (dark) to 15 (light)
 unsigned int batt_mV; // battery millivolts
+
+unsigned int light;     // light on a scale from 0 (dark) to 15 (light)
+float soil_tempC;
+unsigned int soil_moisture; 
+float air_tempC;
+float air_relativehumidity;
+unsigned int air_pressurehPa;
+
 // data to send
-static uint8_t dataTX[8];
+static uint8_t dataTX[52]; // max packet size
+enum payload_types 
+{
+  PAYLOAD_NONE,
+  PAYLOAD_MV_ONLY,
+  PAYLOAD_SOIL,
+  PAYLOAD_AIR,
+  PAYLOAD_SOIL_AND_AIR
+};
+
 
 /* **************************************************************
  * user settings
@@ -80,7 +94,8 @@ unsigned long send_every = 1;
 unsigned long cycle = -1;  //  init at -1, so first cycle starts as cycle 0 for 1st sense/send
 unsigned long prevSleep = 0; 
 
-bool no_sensor = true;
+size_t datasize;
+payload_types payload_type = PAYLOAD_NONE;
 
 /* **************************************************************
  * sensor code, typical would be init_sensor(), do_sense(), build_data()
@@ -98,9 +113,6 @@ void init_sensor() {
     Serial.println(sensor.getAddress(),HEX);
     Serial.print("Sensor Firmware version: ");
     Serial.println(sensor.getVersion(),HEX);
-    if (sensor.getVersion() != 0xFF) {
-      no_sensor = false;
-    }
     Serial.println();
   #endif  
 }
@@ -109,67 +121,85 @@ void init_sensor() {
  * do the reading
  * *************************************************************/
 void do_sense() {
-  while (sensor.isBusy()) delay(50); // available since FW 2.3
-
-  moisture = sensor.getCapacitance();
-
-  tempC = ((float)sensor.getTemperature())/10.0;
-  
-
-  unsigned int lightR = sensor.getLight(true); //request light measurement, wait and read light register
-  // convert the light value (65535 = dark, 0 = light) to a scale of 0 to 15
-  light = lightR / 4096.0;   // 15 = dark, 0 = light
-  light = 15 - light;        // 0 = dark, 15 = light
-
-  // put sensor to sleep  
-  sensor.sleep();
-
   float measuredvbat = analogRead(VBATPIN);
   measuredvbat *=2;
   measuredvbat *= 3.3;
   measuredvbat /= 1024;
   measuredvbat *= 1000;
   batt_mV = (unsigned int)measuredvbat;
+  payload_type = PAYLOAD_MV_ONLY;
+  
+  if (sensor.getVersion() != 0xFF) {
+    while (sensor.isBusy()) delay(50); // available since FW 2.3
+    soil_moisture = sensor.getCapacitance();
 
-  #ifdef DEBUG
-    Serial.print(F("light:"));
-    Serial.print(light);
-    Serial.print(F(" temp:"));
-    Serial.print(tempC);
-    Serial.print(F(" moisture:"));
-    Serial.print(moisture);
-    Serial.println(F(""));
-    Serial.print(F(" battery:"));
-    Serial.print(batt_mV);
-    Serial.println(F(""));
-    
-  #endif
+    soil_tempC = ((float)sensor.getTemperature())/10.0;
+
+    unsigned int lightR = sensor.getLight(true); //request light measurement, wait and read light register
+    // convert the light value (65535 = dark, 0 = light) to a scale of 0 to 15
+    light = lightR / 4096.0;   // 15 = dark, 0 = light
+    light = 15 - light;        // 0 = dark, 15 = light
+
+    // put sensor to sleep  
+    sensor.sleep();
+
+    #ifdef DEBUG
+      Serial.print(F("light:"));
+      Serial.print(light);
+      Serial.print(F(" temp:"));
+      Serial.print(soil_tempC);
+      Serial.print(F(" soil_moisture:"));
+      Serial.print(soil_moisture);
+      Serial.println(F(""));
+      Serial.print(F(" battery:"));
+      Serial.print(batt_mV);
+      Serial.println(F(""));
+    #endif
+    payload_type = PAYLOAD_SOIL;
+  }
+  
+  if (false){// readings for bme280
+    air_tempC = 0.01;
+    air_pressurehPa = 1016.82; //some pressure here
+    // set payload type
+    if (payload_type == PAYLOAD_SOIL) {
+      payload_type = PAYLOAD_SOIL_AND_AIR;
+    }else{
+      payload_type = PAYLOAD_AIR;
+    }
+  }
+
+  
 }
 
-/* **************************************************************
- * build data to transmit in dataTX
- *
- * Suggested payload function for this data
- *
- *  var light = (bytes[0] & 0xF0) >> 4;
- *  var temp = (((bytes[0] & 0x0F) <<8 | bytes[1]) - 2731) / 10;
- *  var moisture = bytes[2] << 8 | bytes[3];
- *  
- *  return { payload: light + ";" + temp + ";" + moisture };
- *
- * *************************************************************/
 void build_data() {
-  size_t n = 0;
+  
+  dataTX[0] = payload_type; 
+  size_t n = 1;
+  
   dataTX[n++] = lowByte(batt_mV);
   dataTX[n++] = highByte(batt_mV);
-  dataTX[n++] = lowByte(light);
-  dataTX[n++] = highByte(light);
-  uint16_t payloadTemp = LMIC_f2sflt16(tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
-  dataTX[n++] = lowByte(payloadTemp);
-  dataTX[n++] = highByte(payloadTemp);
-  dataTX[n++] = lowByte(moisture);
-  dataTX[n++] = highByte(moisture);
-
+  if (payload_type == PAYLOAD_SOIL || payload_type == PAYLOAD_SOIL_AND_AIR){
+    dataTX[n++] = lowByte(light);
+    dataTX[n++] = highByte(light);
+    uint16_t payload_soilTemp = LMIC_f2sflt16(soil_tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
+    dataTX[n++] = lowByte(payload_soilTemp);
+    dataTX[n++] = highByte(payload_soilTemp);
+    dataTX[n++] = lowByte(soil_moisture);
+    dataTX[n++] = highByte(soil_moisture);
+  }
+  if (payload_type == PAYLOAD_AIR || payload_type == PAYLOAD_SOIL_AND_AIR){
+    uint16_t payload_airTemp = LMIC_f2sflt16(air_tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
+    dataTX[n++] = lowByte(payload_airTemp);
+    dataTX[n++] = highByte(payload_airTemp);
+    uint16_t payload_airRh = LMIC_f2sflt16(air_relativehumidity/1000.0); // adjust for the f2sflt16 range (-1 to 1)
+    dataTX[n++] = lowByte(payload_airRh);
+    dataTX[n++] = highByte(payload_airRh);
+    uint16_t payload_airPres = LMIC_f2sflt16(air_pressurehPa/10000.0); // adjust for the f2sflt16 range (-1 to 1)
+    dataTX[n++] = lowByte(payload_airPres);
+    dataTX[n++] = highByte(payload_airPres);
+  }
+  datasize = n;
 }
 
 
@@ -243,7 +273,7 @@ void send_message(osjob_t* j) {
     Serial.println(F("OP_TXRXPEND, not sending"));
   } else {
     // Prepare upstream data transmission at the next possible time.
-    LMIC_setTxData2(1, dataTX, sizeof(dataTX), 0);
+    LMIC_setTxData2(1, dataTX, datasize, 0);
     Serial.println(F("Packet queued"));
   }
 }
@@ -343,15 +373,11 @@ void loop() {
   // next cycle
   cycle += 1;
   unsigned long current = millis(); 
-  if ( !no_sensor ){
-    // check if we need to sense
-    if ( (cycle % sense_every) == 0 ) { do_sense(); }
+  
+  if ( (cycle % sense_every) == 0 ) { do_sense(); }
 
-    // check if need to send
-    if ( (cycle % send_every) == 0 ) { build_data(); do_send(); }
-  }else{
-    Serial.println("No chirp sensor connected");
-  }
+  // check if need to send
+  if ( (cycle % send_every) == 0 ) { build_data(); do_send(); }
   
   // go to sleep
   current = millis();
