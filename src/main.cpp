@@ -84,7 +84,6 @@ enum payload_types
 #define sense_every 1
 #define send_every 1
 
-
 unsigned long cycle = -1;  //  init at -1, so first cycle starts as cycle 0 for 1st sense/send
 unsigned long prevSleep = 0; 
 size_t datasize;
@@ -97,7 +96,6 @@ payload_types payload_type = PAYLOAD_NONE;
  * init the sensor
  * *************************************************************/
 
-
 #define MAX_TRIES 5
 #define BME_MAX_TEMP 85
 #define BME_MIN_TEMP -40
@@ -107,16 +105,15 @@ payload_types payload_type = PAYLOAD_NONE;
 #define BME_MAX_PRES 1100
 
 #include <Wire.h>
-#include <bme280.h>
-
-
 #include <I2CSoilMoistureSensor.h>
-#include <Wire.h>
 I2CSoilMoistureSensor sensor;
+
+#include <BME280I2C.h>
+BME280I2C bme;
+
 /* **************************************************************
  * do the reading
  * *************************************************************/
-BME280<> bme;
 bool isValidBME(float temperature, float humidity, float pressure){
   if (isnan(temperature) || isnan(humidity) || isnan(pressure)) return false;
   if (temperature < BME_MIN_TEMP || temperature > BME_MAX_TEMP) return false;
@@ -153,14 +150,19 @@ bool do_sense_bme280(){
   delay(250);
   tries = 0;
   do {
-    bme.refresh();
-    air_tempC = bme.temperature;
-    air_relativeHumidity = bme.humidity;
-    air_pressurehPa = (int)(bme.pressure/100.0F);
+    // bme.refresh();
+    float pres;
+    bme.read(pres, air_tempC, air_relativeHumidity);
+    air_pressurehPa = (int)pres;
+    // air_tempC = bme.temperature;
+    // air_relativeHumidity = bme.humidity;
+    // air_pressurehPa = (int)(bme.pressure/100.0F);
     delay(100);
   } while (tries++ < MAX_TRIES && !isValidBME(air_tempC, air_relativeHumidity, air_pressurehPa));
   
   if (tries >= MAX_TRIES) return false;
+  Serial.print(F("bme280 read success: "));
+  Serial.println(air_tempC);
   return true;
 }
 
@@ -168,14 +170,6 @@ void init_sensor() {
   Wire.begin();
   sensor.begin(); // reset sensor
   delay(1000); // give some time to boot up
-
-  #ifdef DEBUG
-    Serial.print("I2C Soil Moisture Sensor Address: ");
-    Serial.println(sensor.getAddress(),HEX);
-    Serial.print("Sensor Firmware version: ");
-    Serial.println(sensor.getVersion(),HEX);
-    Serial.println();
-  #endif  
 }
 
 void do_sense() {
@@ -186,8 +180,8 @@ void do_sense() {
   measuredvbat *= 1000;
   batt_mV = (unsigned int)measuredvbat;
   payload_type = PAYLOAD_MV_ONLY;
-  if (do_sense_bme280()) payload_type = PAYLOAD_AIR;
 
+  if (do_sense_bme280()) payload_type = PAYLOAD_AIR;
 
   if (sensor.getVersion() != 0xFF) {
     while (sensor.isBusy()) delay(50); // available since FW 2.3
@@ -202,18 +196,8 @@ void do_sense() {
     // put sensor to sleep  
     sensor.sleep();
 
-    #ifdef DEBUG
-      Serial.print(F("light:"));
-      Serial.print(light);
-      Serial.print(F(" temp:"));
-      Serial.print(soil_tempC);
-      Serial.print(F(" soil_moisture:"));
-      Serial.print(soil_moisture);
-      Serial.println(F(""));
-      Serial.print(F(" battery:"));
-      Serial.print(batt_mV);
-      Serial.println(F(""));
-    #endif
+    Serial.print(F("chirp read success: "));
+    Serial.println(soil_tempC);
     if(payload_type == PAYLOAD_AIR) payload_type = PAYLOAD_SOIL_AND_AIR;
     else payload_type = PAYLOAD_SOIL;
   }  
