@@ -40,7 +40,6 @@ const lmic_pinmap lmic_pins = {
    .dio = {7, 6, LMIC_UNUSED_PIN}, 
 };
 
-
 /* **************************************************************
  * low power
  * *************************************************************/
@@ -56,20 +55,14 @@ const lmic_pinmap lmic_pins = {
 // I2C soil moisture settings (HAS)
 // https://www.tindie.com/products/miceuz/i2c-soil-moisture-sensor/
 
-#include <I2CSoilMoistureSensor.h>
-#include <Wire.h>
-
 #define VBATPIN A9
 
-I2CSoilMoistureSensor sensor;
-
 unsigned int batt_mV; // battery millivolts
-
 unsigned int light;     // light on a scale from 0 (dark) to 15 (light)
 float soil_tempC;
 unsigned int soil_moisture; 
 float air_tempC;
-float air_relativehumidity;
+float air_relativeHumidity;
 unsigned int air_pressurehPa;
 
 // data to send
@@ -87,13 +80,13 @@ enum payload_types
 /* **************************************************************
  * user settings
  * *************************************************************/
-unsigned long cycle_length = 10 * 60 * 1000UL; // cycle * mins_or_secs * 1000;
-unsigned long sense_every = 1;
-unsigned long send_every = 1;
+#define cycle_length (10 * 60 * 1000UL) // cycle * mins_or_secs * 1000;
+#define sense_every 1
+#define send_every 1
+
 
 unsigned long cycle = -1;  //  init at -1, so first cycle starts as cycle 0 for 1st sense/send
 unsigned long prevSleep = 0; 
-
 size_t datasize;
 payload_types payload_type = PAYLOAD_NONE;
 
@@ -103,6 +96,74 @@ payload_types payload_type = PAYLOAD_NONE;
 /* **************************************************************
  * init the sensor
  * *************************************************************/
+
+
+#define MAX_TRIES 5
+#define BME_MAX_TEMP 85
+#define BME_MIN_TEMP -40
+#define BME_MAX_HUM 100
+#define BME_MIN_HUM 0
+#define BME_MIN_PRES 300
+#define BME_MAX_PRES 1100
+
+#include <Wire.h>
+#include <bme280.h>
+
+
+#include <I2CSoilMoistureSensor.h>
+#include <Wire.h>
+I2CSoilMoistureSensor sensor;
+/* **************************************************************
+ * do the reading
+ * *************************************************************/
+BME280<> bme;
+bool isValidBME(float temperature, float humidity, float pressure){
+  if (isnan(temperature) || isnan(humidity) || isnan(pressure)) return false;
+  if (temperature < BME_MIN_TEMP || temperature > BME_MAX_TEMP) return false;
+  if (humidity < BME_MIN_HUM || humidity > BME_MAX_HUM) return false;
+  if (pressure < BME_MIN_PRES || pressure > BME_MAX_PRES) return false;
+  return true;
+}
+
+bool do_sense_bme280(){
+  float measuredvbat = analogRead(VBATPIN);
+  measuredvbat *=2;
+  measuredvbat *= 3.3;
+  measuredvbat /= 1024;
+  measuredvbat *= 1000;
+  batt_mV = (unsigned int)measuredvbat;
+  payload_type = PAYLOAD_MV_ONLY;
+
+  /**
+   * reads values from a bme280 sensor and adds the data to the sender.
+   * 
+   * @param byte addr the i2c address of the sensor.
+   * @return bool whether the sensor was successfully read and datapoints added to sender.
+   */
+  size_t tries = 0;
+  do {
+    delay(250);
+  } while (tries++ < MAX_TRIES && !bme.begin());
+
+  if (tries >= MAX_TRIES) {
+    Serial.println(F("bme280 too many tries"));
+    return false;
+  }
+
+  delay(250);
+  tries = 0;
+  do {
+    bme.refresh();
+    air_tempC = bme.temperature;
+    air_relativeHumidity = bme.humidity;
+    air_pressurehPa = (int)(bme.pressure/100.0F);
+    delay(100);
+  } while (tries++ < MAX_TRIES && !isValidBME(air_tempC, air_relativeHumidity, air_pressurehPa));
+  
+  if (tries >= MAX_TRIES) return false;
+  return true;
+}
+
 void init_sensor() {
   Wire.begin();
   sensor.begin(); // reset sensor
@@ -117,9 +178,6 @@ void init_sensor() {
   #endif  
 }
 
-/* **************************************************************
- * do the reading
- * *************************************************************/
 void do_sense() {
   float measuredvbat = analogRead(VBATPIN);
   measuredvbat *=2;
@@ -128,7 +186,9 @@ void do_sense() {
   measuredvbat *= 1000;
   batt_mV = (unsigned int)measuredvbat;
   payload_type = PAYLOAD_MV_ONLY;
-  
+  if (do_sense_bme280()) payload_type = PAYLOAD_AIR;
+
+
   if (sensor.getVersion() != 0xFF) {
     while (sensor.isBusy()) delay(50); // available since FW 2.3
     soil_moisture = sensor.getCapacitance();
@@ -139,7 +199,6 @@ void do_sense() {
     // convert the light value (65535 = dark, 0 = light) to a scale of 0 to 15
     light = lightR / 4096.0;   // 15 = dark, 0 = light
     light = 15 - light;        // 0 = dark, 15 = light
-
     // put sensor to sleep  
     sensor.sleep();
 
@@ -155,25 +214,12 @@ void do_sense() {
       Serial.print(batt_mV);
       Serial.println(F(""));
     #endif
-    payload_type = PAYLOAD_SOIL;
-  }
-  
-  if (false){// readings for bme280
-    air_tempC = 0.01;
-    air_pressurehPa = 1016.82; //some pressure here
-    // set payload type
-    if (payload_type == PAYLOAD_SOIL) {
-      payload_type = PAYLOAD_SOIL_AND_AIR;
-    }else{
-      payload_type = PAYLOAD_AIR;
-    }
-  }
-
-  
+    if(payload_type == PAYLOAD_AIR) payload_type = PAYLOAD_SOIL_AND_AIR;
+    else payload_type = PAYLOAD_SOIL;
+  }  
 }
 
 void build_data() {
-  
   dataTX[0] = payload_type; 
   size_t n = 1;
   
@@ -192,7 +238,7 @@ void build_data() {
     uint16_t payload_airTemp = LMIC_f2sflt16(air_tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
     dataTX[n++] = lowByte(payload_airTemp);
     dataTX[n++] = highByte(payload_airTemp);
-    uint16_t payload_airRh = LMIC_f2sflt16(air_relativehumidity/1000.0); // adjust for the f2sflt16 range (-1 to 1)
+    uint16_t payload_airRh = LMIC_f2sflt16(air_relativeHumidity/1000.0); // adjust for the f2sflt16 range (-1 to 1)
     dataTX[n++] = lowByte(payload_airRh);
     dataTX[n++] = highByte(payload_airRh);
     uint16_t payload_airPres = LMIC_f2sflt16(air_pressurehPa/10000.0); // adjust for the f2sflt16 range (-1 to 1)
@@ -230,12 +276,8 @@ void do_sleep(float sleepTime) {
       sleepTime -= delays[i];
     } 
   }
-
 }
 
-// test payload :F000F400EF1100 
-// light:15 temp:244 moisture:239 battery:4460
-  
 /* **************************************************************
  * radio code, typical would be init_node(), do_send(), etc
  * *************************************************************/
@@ -261,7 +303,6 @@ void init_node() {
   // got this fix from forum: https://www.thethingsnetwork.org/forum/t/over-the-air-activation-otaa-with-lmic/1921/36
   LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
   LMIC_selectSubBand(1);
-
 }
 
 /* *****************************************************************************
