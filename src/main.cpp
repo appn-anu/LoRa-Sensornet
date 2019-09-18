@@ -5,7 +5,6 @@
  * 
  * *************************************************************/
 #include <SPI.h>
-
 // define the activation method ABP or OTAA
 #define ACT_METHOD_OTAA
 
@@ -42,6 +41,7 @@ const lmic_pinmap lmic_pins = {
 
 /* **************************************************************
  * low power
+ * https://github.com/rocketscream/Low-Power
  * *************************************************************/
 
 #include "LowPower.h"
@@ -49,31 +49,22 @@ const lmic_pinmap lmic_pins = {
 // show debug statements; comment next line to disable debug statements
 #define DEBUG
 
-/* ************************************************************** 
- *  sensor settings
- * *************************************************************/
-// I2C soil moisture settings (HAS)
-// https://www.tindie.com/products/miceuz/i2c-soil-moisture-sensor/
-
 #define VBATPIN A9
-
-unsigned int batt_mV; // battery millivolts
-unsigned int light;     // light on a scale from 0 (dark) to 15 (light)
-float soil_tempC;
-unsigned int soil_moisture; 
-float air_tempC;
-float air_relativeHumidity;
-unsigned int air_pressurehPa;
+#define ANALOGPIN A1 // read from analog pin 1 (not 0 as it is the DAC for M0)
 
 // data to send
 static uint8_t dataTX[52]; // max packet size
 enum payload_types 
 {
   PAYLOAD_NONE,
-  PAYLOAD_MV_ONLY,
-  PAYLOAD_SOIL,
-  PAYLOAD_AIR,
-  PAYLOAD_SOIL_AND_AIR
+  PAYLOAD_BATT_ONLY,
+  PAYLOAD_BATT_SOIL,
+  PAYLOAD_BATT_AIR,
+  PAYLOAD_BATT_SOIL_AIR,
+  PAYLOAD_BATT_ANALOG,
+  PAYLOAD_BATT_ANALOG_SOIL,
+  PAYLOAD_BATT_ANALOG_AIR,
+  PAYLOAD_BATT_ANALOG_SOIL_AIR
 };
 
 
@@ -90,10 +81,7 @@ size_t datasize;
 payload_types payload_type = PAYLOAD_NONE;
 
 /* **************************************************************
- * sensor code, typical would be init_sensor(), do_sense(), build_data()
- * *************************************************************/
-/* **************************************************************
- * init the sensor
+ * sensor settings
  * *************************************************************/
 
 #define MAX_TRIES 5
@@ -105,64 +93,29 @@ payload_types payload_type = PAYLOAD_NONE;
 #define BME_MAX_PRES 1100
 
 #include <Wire.h>
+
+
+/* **************************************************************
+ * I2C soil moisture sensor
+ * https://www.tindie.com/products/miceuz/i2c-soil-moisture-sensor/
+ * https://github.com/Apollon77/I2CSoilMoistureSensor
+ * *************************************************************/
 #include <I2CSoilMoistureSensor.h>
 I2CSoilMoistureSensor sensor;
 
+/* **************************************************************
+ * BME280 I2C library, Tyler Glenn <finitespaceghb2@junk.yoglenn.com>
+ * https://www.github.com/finitespace/BME280
+ * *************************************************************/
 #include <BME280I2C.h>
 BME280I2C bme;
 
-/* **************************************************************
- * do the reading
- * *************************************************************/
+
 bool isValidBME(float temperature, float humidity, float pressure){
   if (isnan(temperature) || isnan(humidity) || isnan(pressure)) return false;
   if (temperature < BME_MIN_TEMP || temperature > BME_MAX_TEMP) return false;
   if (humidity < BME_MIN_HUM || humidity > BME_MAX_HUM) return false;
   if (pressure < BME_MIN_PRES || pressure > BME_MAX_PRES) return false;
-  return true;
-}
-
-bool do_sense_bme280(){
-  float measuredvbat = analogRead(VBATPIN);
-  measuredvbat *=2;
-  measuredvbat *= 3.3;
-  measuredvbat /= 1024;
-  measuredvbat *= 1000;
-  batt_mV = (unsigned int)measuredvbat;
-  payload_type = PAYLOAD_MV_ONLY;
-
-  /**
-   * reads values from a bme280 sensor and adds the data to the sender.
-   * 
-   * @param byte addr the i2c address of the sensor.
-   * @return bool whether the sensor was successfully read and datapoints added to sender.
-   */
-  size_t tries = 0;
-  do {
-    delay(250);
-  } while (tries++ < MAX_TRIES && !bme.begin());
-
-  if (tries >= MAX_TRIES) {
-    Serial.println(F("bme280 too many tries"));
-    return false;
-  }
-
-  delay(250);
-  tries = 0;
-  do {
-    // bme.refresh();
-    float pres;
-    bme.read(pres, air_tempC, air_relativeHumidity);
-    air_pressurehPa = (int)pres;
-    // air_tempC = bme.temperature;
-    // air_relativeHumidity = bme.humidity;
-    // air_pressurehPa = (int)(bme.pressure/100.0F);
-    delay(100);
-  } while (tries++ < MAX_TRIES && !isValidBME(air_tempC, air_relativeHumidity, air_pressurehPa));
-  
-  if (tries >= MAX_TRIES) return false;
-  Serial.print(F("bme280 read success: "));
-  Serial.println(air_tempC);
   return true;
 }
 
@@ -173,63 +126,84 @@ void init_sensor() {
 }
 
 void do_sense() {
-  float measuredvbat = analogRead(VBATPIN);
-  measuredvbat *=2;
-  measuredvbat *= 3.3;
-  measuredvbat /= 1024;
-  measuredvbat *= 1000;
-  batt_mV = (unsigned int)measuredvbat;
-  payload_type = PAYLOAD_MV_ONLY;
+  memset(dataTX, 0, sizeof(dataTX)); // set dataTX to 0
+  size_t n = 1; // leave 0 for payload_type
+  
+  dataTX[0] = PAYLOAD_BATT_ANALOG; // set payload type to battery and analog to begin with
+  analogReadResolution(12); // set the adc resolution even if the hardware doesnt support it
+  float analogBatt = analogRead(VBATPIN);
+  analogBatt *=2; // voltage divider for battery pin
+  analogBatt *= 3300; // aref mV
+  analogBatt /= 4096; // max resolution of adc @ 12bits
+  uint8_t batt_mV = (uint8_t)analogBatt;
+  dataTX[n++] = lowByte(batt_mV);
+  dataTX[n++] = highByte(batt_mV);
 
-  if (do_sense_bme280()) payload_type = PAYLOAD_AIR;
+  float analogMeasurement = analogRead(ANALOGPIN);
+  analogMeasurement *= 3300; // aref mV
+  analogMeasurement /= 4096; // max resolution of adc @ 12bits
+  uint8_t analog_mV = (uint8_t)(analogMeasurement);
+  dataTX[n++] = lowByte(analog_mV);
+  dataTX[n++] = highByte(analog_mV);
+  
+  size_t tries = 0;
 
+  if (bme.begin()){ // bme returns true when is successful and sensor exists.
+    float air_tempC, air_relativeHumidity;
+    uint16_t air_pressurehPa;
+    do {
+      // bme.refresh();
+      float pres_read;
+      bme.read(pres_read, air_tempC, air_relativeHumidity);
+      air_pressurehPa = (uint16_t)pres_read;
+      // air_tempC = bme.temperature;
+      // air_relativeHumidity = bme.humidity;
+      // air_pressurehPa = (int)(bme.pressure/100.0F);
+      delay(100);
+    } while (tries++ < MAX_TRIES && !isValidBME(air_tempC, air_relativeHumidity, air_pressurehPa));
+    
+    if (tries < MAX_TRIES) {
+      uint16_t payload_airTemp = LMIC_f2sflt16(air_tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
+      dataTX[n++] = lowByte(payload_airTemp);
+      dataTX[n++] = highByte(payload_airTemp);
+      uint16_t payload_airRh = LMIC_f2sflt16(air_relativeHumidity/1000.0); // adjust for the f2sflt16 range (-1 to 1)
+      dataTX[n++] = lowByte(payload_airRh);
+      dataTX[n++] = highByte(payload_airRh);
+      uint16_t payload_airPres = LMIC_f2sflt16(air_pressurehPa/10000.0); // adjust for the f2sflt16 range (-1 to 1)
+      dataTX[n++] = lowByte(payload_airPres);
+      dataTX[n++] = highByte(payload_airPres);
+      Serial.print(F("bme280 read success: "));
+      Serial.println(air_tempC);
+      dataTX[0] = PAYLOAD_BATT_ANALOG_AIR;
+    }
+  }
+
+  // we detect the sensor version because it is already begun
   if (sensor.getVersion() != 0xFF) {
     while (sensor.isBusy()) delay(50); // available since FW 2.3
-    soil_moisture = sensor.getCapacitance();
+    
+    unsigned int soil_moisture = sensor.getCapacitance();
 
-    soil_tempC = ((float)sensor.getTemperature())/10.0;
+    float soil_tempC = ((float)sensor.getTemperature())/10.0;
 
     unsigned int lightR = sensor.getLight(true); //request light measurement, wait and read light register
     // convert the light value (65535 = dark, 0 = light) to a scale of 0 to 15
-    light = lightR / 4096.0;   // 15 = dark, 0 = light
+    uint8_t light = lightR / 4096.0;   // 15 = dark, 0 = light
     light = 15 - light;        // 0 = dark, 15 = light
-    // put sensor to sleep  
+    // put sensor to sleep
     sensor.sleep();
-
-    Serial.print(F("chirp read success: "));
-    Serial.println(soil_tempC);
-    if(payload_type == PAYLOAD_AIR) payload_type = PAYLOAD_SOIL_AND_AIR;
-    else payload_type = PAYLOAD_SOIL;
-  }  
-}
-
-void build_data() {
-  dataTX[0] = payload_type; 
-  size_t n = 1;
-  
-  dataTX[n++] = lowByte(batt_mV);
-  dataTX[n++] = highByte(batt_mV);
-  if (payload_type == PAYLOAD_SOIL || payload_type == PAYLOAD_SOIL_AND_AIR){
-    dataTX[n++] = lowByte(light);
-    dataTX[n++] = highByte(light);
+    dataTX[n++] = light;
     uint16_t payload_soilTemp = LMIC_f2sflt16(soil_tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
     dataTX[n++] = lowByte(payload_soilTemp);
     dataTX[n++] = highByte(payload_soilTemp);
     dataTX[n++] = lowByte(soil_moisture);
     dataTX[n++] = highByte(soil_moisture);
-  }
-  if (payload_type == PAYLOAD_AIR || payload_type == PAYLOAD_SOIL_AND_AIR){
-    uint16_t payload_airTemp = LMIC_f2sflt16(air_tempC/100.0); // adjust for the f2sflt16 range (-1 to 1)
-    dataTX[n++] = lowByte(payload_airTemp);
-    dataTX[n++] = highByte(payload_airTemp);
-    uint16_t payload_airRh = LMIC_f2sflt16(air_relativeHumidity/1000.0); // adjust for the f2sflt16 range (-1 to 1)
-    dataTX[n++] = lowByte(payload_airRh);
-    dataTX[n++] = highByte(payload_airRh);
-    uint16_t payload_airPres = LMIC_f2sflt16(air_pressurehPa/10000.0); // adjust for the f2sflt16 range (-1 to 1)
-    dataTX[n++] = lowByte(payload_airPres);
-    dataTX[n++] = highByte(payload_airPres);
-  }
-  datasize = n;
+    Serial.print(F("chirp read success: "));
+    Serial.println(soil_tempC);
+    if(dataTX[0] == PAYLOAD_BATT_ANALOG_AIR) dataTX[0] = PAYLOAD_BATT_ANALOG_SOIL_AIR; // set payload  type
+    else dataTX[0] = PAYLOAD_BATT_ANALOG_SOIL;
+  } 
+  datasize = n; // set the datasize so we know how much data to transmit.
 }
 
 
@@ -402,7 +376,7 @@ void loop() {
   if ( (cycle % sense_every) == 0 ) { do_sense(); }
 
   // check if need to send
-  if ( (cycle % send_every) == 0 ) { build_data(); do_send(); }
+  if ( (cycle % send_every) == 0 ) { do_send(); }
   
   // go to sleep
   current = millis();

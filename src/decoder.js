@@ -43,11 +43,15 @@ function sflt162f(rawSflt16){
 }
 
 var payload_types = {
-    PAYLOAD_NONE: 0x0,
-    PAYLOAD_MV_ONLY: 1,
-    PAYLOAD_SOIL: 2,
-    PAYLOAD_AIR: 3,
-    PAYLOAD_SOIL_AND_AIR: 4
+    PAYLOAD_NONE: 0x00,
+    PAYLOAD_BATT_ONLY: 0x01,
+    PAYLOAD_BATT_SOIL: 0x02,
+    PAYLOAD_BATT_AIR: 0x03,
+    PAYLOAD_BATT_SOIL_AIR: 0x04,
+    PAYLOAD_BATT_ANALOG: 0x05,
+    PAYLOAD_BATT_ANALOG_SOIL: 0x06,
+    PAYLOAD_BATT_ANALOG_AIR: 0x07,
+    PAYLOAD_BATT_ANALOG_SOIL_AIR: 0x08
 };
 
 function Decoder(bytes, port) {
@@ -62,20 +66,31 @@ function Decoder(bytes, port) {
         decoded.batt_mV = bytes[n++] + bytes[n++] * 256;    
     }
 
-    if (payload_type == payload_types.PAYLOAD_SOIL){
+    if (payload_type >= payload_types.PAYLOAD_BATT_ANALOG){
+        decoded.analog_mV = bytes[n++] + bytes[n++] * 256;
+    }
+
+    if (payload_type == payload_types.PAYLOAD_BATT_SOIL || 
+        payload_type == payload_types.PAYLOAD_BATT_ANALOG_AIR){
         decoded.light         = bytes[n++] + bytes[n++] * 256;
         decoded.soil_tempC    = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0,
         decoded.soil_moisture = bytes[n++] + bytes[n++] * 256
     }
 
-    if (payload_type == payload_types.PAYLOAD_AIR){
+    if (payload_type == payload_types.PAYLOAD_BATT_AIR ||
+        payload_type == payload_types.PAYLOAD_BATT_ANALOG_AIR ){
         decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
         decoded.air_relativehumidity = sflt162f(bytes[n++] + bytes[n++] *256) * 1000.0;
         decoded.air_pressureP        = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;
     }
 
-    if (payload_type == payload_types.PAYLOAD_SOIL_AND_AIR){
-        decoded.light                = bytes[n++] + bytes[n++] * 256;
+    if (payload_type == payload_types.PAYLOAD_BATT_SOIL_AIR ||
+        payload_type == payload_types.PAYLOAD_BATT_ANALOG_SOIL_AIR ){
+        if (payload_type == payload_types.PAYLOAD_BATT_SOIL_AIR) {
+            decoded.light = bytes[n++] + bytes[n++] * 256; // old way to send light
+        } else{
+            decoded.light = bytes[n++]; // light changes to single byte in new
+        }
         decoded.soil_tempC           = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
         decoded.soil_moisture        = bytes[n++] + bytes[n++] * 256;
         decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
