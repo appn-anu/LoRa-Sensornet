@@ -71,7 +71,7 @@ function Decoder(bytes, port) {
     }
 
     if (payload_type == payload_types.PAYLOAD_BATT_SOIL || 
-        payload_type == payload_types.PAYLOAD_BATT_ANALOG_AIR){
+        payload_type == payload_types.PAYLOAD_BATT_ANALOG_SOIL){
         decoded.light         = bytes[n++] + bytes[n++] * 256;
         decoded.soil_tempC    = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0,
         decoded.soil_moisture = bytes[n++] + bytes[n++] * 256
@@ -81,7 +81,7 @@ function Decoder(bytes, port) {
         payload_type == payload_types.PAYLOAD_BATT_ANALOG_AIR ){
         decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
         decoded.air_relativehumidity = sflt162f(bytes[n++] + bytes[n++] *256) * 1000.0;
-        decoded.air_pressureP        = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;
+        decoded.air_pressurehPa        = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;
     }
 
     if (payload_type == payload_types.PAYLOAD_BATT_SOIL_AIR ||

@@ -20,6 +20,7 @@
 // Declare the job control structures
 static osjob_t sendjob;
 
+#define SLEEP_MINUTES 10
 
 // These callbacks are only used in over-the-air activation, so they are
 // left empty when ABP (we cannot leave them out completely unless
@@ -32,24 +33,24 @@ void os_getDevKey (u1_t* buf) { memcpy_P(buf, APPKEY, 16);}
 /* ************************************************************** 
  * Pin mapping
  * *************************************************************/
+
 const lmic_pinmap lmic_pins = { 
    .nss = 8, 
    .rxtx = LMIC_UNUSED_PIN, 
    .rst = 4, 
-   .dio = {7, 6, LMIC_UNUSED_PIN}, 
+   .dio = {3, 6, 5}, 
 };
 
-/* **************************************************************
- * low power
- * https://github.com/rocketscream/Low-Power
- * *************************************************************/
 
-#include "LowPower.h"
+
+#include <RTCZero.h>
+RTCZero rtc;
 
 // show debug statements; comment next line to disable debug statements
 #define DEBUG
 
-#define VBATPIN A9
+#define VBATPIN A7
+
 #define ANALOGPIN A1 // read from analog pin 1 (not 0 as it is the DAC for M0)
 
 // data to send
@@ -71,7 +72,7 @@ enum payload_types
 /* **************************************************************
  * user settings
  * *************************************************************/
-#define cycle_length (10 * 60 * 1000UL) // cycle * mins_or_secs * 1000;
+#define cycle_length (1 * 60 * 1000UL) // cycle * mins_or_secs * 1000;
 #define sense_every 1
 #define send_every 1
 
@@ -93,7 +94,6 @@ payload_types payload_type = PAYLOAD_NONE;
 #define BME_MAX_PRES 1100
 
 #include <Wire.h>
-
 
 /* **************************************************************
  * I2C soil moisture sensor
@@ -131,18 +131,19 @@ void do_sense() {
   
   dataTX[0] = PAYLOAD_BATT_ANALOG; // set payload type to battery and analog to begin with
   analogReadResolution(12); // set the adc resolution even if the hardware doesnt support it
+
   float analogBatt = analogRead(VBATPIN);
-  analogBatt *=2; // voltage divider for battery pin
+  analogBatt *= 2; // voltage divider for battery pin
   analogBatt *= 3300; // aref mV
   analogBatt /= 4096; // max resolution of adc @ 12bits
-  uint8_t batt_mV = (uint8_t)analogBatt;
+  uint16_t batt_mV = (uint16_t)analogBatt;
   dataTX[n++] = lowByte(batt_mV);
   dataTX[n++] = highByte(batt_mV);
 
   float analogMeasurement = analogRead(ANALOGPIN);
   analogMeasurement *= 3300; // aref mV
   analogMeasurement /= 4096; // max resolution of adc @ 12bits
-  uint8_t analog_mV = (uint8_t)(analogMeasurement);
+  uint16_t analog_mV = (uint16_t)(analogMeasurement);
   dataTX[n++] = lowByte(analog_mV);
   dataTX[n++] = highByte(analog_mV);
   
@@ -206,34 +207,38 @@ void do_sense() {
   datasize = n; // set the datasize so we know how much data to transmit.
 }
 
+void alarmMatch(){
+  digitalWrite(8, LOW);
+  digitalWrite(LED_BUILTIN, HIGH);
+};
 
 /* **************************************************************
 * sleep
 * *************************************************************/
-void do_sleep(float sleepTime) {
-
-  #ifdef DEBUG
-    Serial.print(F("Sleep for "));
-    Serial.print(sleepTime/1000, 3);
-    Serial.println(F(" seconds"));
-  #endif
-
+void do_sleep() {
+  
+  Serial.print("Sleeping for ");
+  Serial.print(SLEEP_MINUTES);
+  Serial.println(" minutes..." );
   Serial.flush();
-  // sleep logic using LowPower library
-  int delays[] = {8000, 4000, 2000, 1000, 500, 250, 120, 60, 30, 15};
-  period_t sleep[] = {SLEEP_8S, SLEEP_4S, SLEEP_2S, SLEEP_1S, SLEEP_500MS,  SLEEP_250MS, SLEEP_120MS, SLEEP_60MS, SLEEP_30MS, SLEEP_15MS};
 
-  // correction for overhead in this routine
-  sleepTime = sleepTime * 0.93;
+#ifdef USBCON
+  USBDevice.detach();
+#endif
 
-  float x;
-  unsigned int i;
-  for (i=0; i<=9; i++) {
-    for (x=sleepTime; x>=delays[i]; x-=delays[i]) {
-      LowPower.powerDown(sleep[i], ADC_OFF, BOD_ON);
-      sleepTime -= delays[i];
-    } 
-  }
+  digitalWrite(LED_BUILTIN, LOW);
+  digitalWrite(8, HIGH);
+  
+  rtc.setAlarmMinutes(SLEEP_MINUTES);
+  rtc.enableAlarm(rtc.MATCH_MMSS);
+  rtc.attachInterrupt(alarmMatch);
+  rtc.standbyMode();
+
+#ifdef USBCON
+  USBDevice.attach();
+#endif
+  digitalWrite(8, LOW);
+  digitalWrite(LED_BUILTIN, HIGH);
 }
 
 /* **************************************************************
@@ -282,19 +287,12 @@ void send_message(osjob_t* j) {
  * send the message
  * *************************************************************/
 void do_send() {
-
-  Serial.print(millis());
-  Serial.print(F(" Sending.. "));  
-
+  Serial.println(F("Sending..."));  
   send_message(&sendjob);
-
   // wait for send to complete
-  Serial.print(millis());
-  Serial.print(F(" Waiting.. "));  
- 
+  Serial.println(F("Waiting..."));  
   while ( (LMIC.opmode & OP_JOINING) or (LMIC.opmode & OP_TXRXPEND) ) { os_runloop_once();  }
-  Serial.print(millis());
-  Serial.println(F(" TX_COMPLETE"));
+  Serial.println(F("TX_COMPLETE"));
 }
   
 /*******************************************************************************/
@@ -369,19 +367,12 @@ void onEvent (ev_t ev) {
  * loop
  * *************************************************************/
 void loop() {
-  // next cycle
-  cycle += 1;
-  unsigned long current = millis(); 
-  
-  if ( (cycle % sense_every) == 0 ) { do_sense(); }
+  rtc.setTime(0, 0, 0);
+  do_sense();
 
-  // check if need to send
-  if ( (cycle % send_every) == 0 ) { do_send(); }
-  
-  // go to sleep
-  current = millis();
-  do_sleep(cycle_length - (current - prevSleep));  // sleep minus elapsed time
-  prevSleep = current;
+  // // check if need to send
+  do_send();
+  do_sleep();  // sleep minus elapsed time
 }
 
 /* **************************************************************
@@ -394,7 +385,13 @@ void setup() {
   //Set baud rate
   Serial.begin(9600);
   Serial.println(F("Lora soil moisture sensor node (template version: 13Jan2017 generated: 19Aug2019)"));
+  pinMode(0, INPUT_PULLUP);
+  pinMode(1, INPUT_PULLUP);
+  pinMode(2, INPUT_PULLUP);
+  pinMode(5, INPUT_PULLUP);
+  
 
+  rtc.begin(true);
   init_node();
   init_sensor();
 }
