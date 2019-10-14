@@ -1,3 +1,14 @@
+
+var PAYLOAD_NONE   = 0;
+var PAYLOAD_BATT   = (1 << 0);
+var PAYLOAD_SOIL   = (1 << 1);
+var PAYLOAD_AIR    = (1 << 2);
+var PAYLOAD_ANALOG1 = (1 << 3);
+var PAYLOAD_ANALOG2 = (1 << 4);
+var PAYLOAD_ANALOG3 = (1 << 5);
+var PAYLOAD_ANALOG4 = (1 << 6);
+var PAYLOAD_ANALOG5 = (1 << 7);
+
 // decoder.js 
 // ttn decoder for this application
 
@@ -42,57 +53,56 @@ function sflt162f(rawSflt16){
     return f_unscaled;
 }
 
-var payload_types = {
-    PAYLOAD_NONE: 0x00,
-    PAYLOAD_BATT_ONLY: 0x01,
-    PAYLOAD_BATT_SOIL: 0x02,
-    PAYLOAD_BATT_AIR: 0x03,
-    PAYLOAD_BATT_SOIL_AIR: 0x04,
-    PAYLOAD_BATT_ANALOG: 0x05,
-    PAYLOAD_BATT_ANALOG_SOIL: 0x06,
-    PAYLOAD_BATT_ANALOG_AIR: 0x07,
-    PAYLOAD_BATT_ANALOG_SOIL_AIR: 0x08
-};
-
 function Decoder(bytes, port) {
     // Decode an uplink message from a buffer
     // (array) of bytes to an object of fields.
 
     var decoded = {};
+    
+    var payload_type = bytes[0] + bytes[1] * 256;
+    var n = 2
 
-    var payload_type = bytes[0];
-    var n = 1
-    if (payload_type != payload_types.PAYLOAD_NONE){
+    if (payload_type == PAYLOAD_NONE) {
+        // none
+    }
+    if (payload_type & PAYLOAD_BATT){
         decoded.batt_mV = bytes[n++] + bytes[n++] * 256;    
     }
-
-    if (payload_type >= payload_types.PAYLOAD_BATT_ANALOG){
-        decoded.analog_mV = bytes[n++] + bytes[n++] * 256;
+    
+    if (payload_type & PAYLOAD_ANALOG1) {
+        // decode analog
+        decoded.analog1_mV = bytes[n++] + bytes[n++] * 256;
     }
 
-    if (payload_type == payload_types.PAYLOAD_BATT_SOIL || 
-        payload_type == payload_types.PAYLOAD_BATT_ANALOG_SOIL){
-        decoded.light         = bytes[n++] + bytes[n++] * 256;
+    if (payload_type & PAYLOAD_ANALOG2) {
+        // decode analog
+        decoded.analog2_mV = bytes[n++] + bytes[n++] * 256;
+    }
+
+    if (payload_type & PAYLOAD_ANALOG3) {
+        // decode analog
+        decoded.analog3_mV = bytes[n++] + bytes[n++] * 256;
+    }
+
+    if (payload_type & PAYLOAD_ANALOG4) {
+        // decode analog
+        decoded.analog4_mV = bytes[n++] + bytes[n++] * 256;
+    }
+
+    if (payload_type & PAYLOAD_ANALOG5) {
+        // decode analog
+        decoded.analog5_mV = bytes[n++] + bytes[n++] * 256;
+    }
+
+    if (payload_type & PAYLOAD_SOIL){
+        // decode soil
+        decoded.light         = bytes[n++]; // light is single byte
         decoded.soil_tempC    = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0,
         decoded.soil_moisture = bytes[n++] + bytes[n++] * 256
     }
 
-    if (payload_type == payload_types.PAYLOAD_BATT_AIR ||
-        payload_type == payload_types.PAYLOAD_BATT_ANALOG_AIR ){
-        decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
-        decoded.air_relativehumidity = sflt162f(bytes[n++] + bytes[n++] *256) * 1000.0;
-        decoded.air_pressurehPa        = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;
-    }
-
-    if (payload_type == payload_types.PAYLOAD_BATT_SOIL_AIR ||
-        payload_type == payload_types.PAYLOAD_BATT_ANALOG_SOIL_AIR ){
-        if (payload_type == payload_types.PAYLOAD_BATT_SOIL_AIR) {
-            decoded.light = bytes[n++] + bytes[n++] * 256; // old way to send light
-        } else{
-            decoded.light = bytes[n++]; // light changes to single byte in new
-        }
-        decoded.soil_tempC           = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
-        decoded.soil_moisture        = bytes[n++] + bytes[n++] * 256;
+    if (payload_type & PAYLOAD_AIR){
+        // decode air
         decoded.air_tempC            = sflt162f(bytes[n++] + bytes[n++] *256) * 100.0;
         decoded.air_relativehumidity = sflt162f(bytes[n++] + bytes[n++] *256) * 1000.0;
         decoded.air_pressurehPa      = sflt162f(bytes[n++] + bytes[n++] *256) * 10000.0;

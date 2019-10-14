@@ -30,6 +30,7 @@ void os_getArtEui (u1_t* buf) { memcpy_P(buf, APPEUI, 8);}
 void os_getDevEui (u1_t* buf) { memcpy_P(buf, DEVEUI, 8);}
 void os_getDevKey (u1_t* buf) { memcpy_P(buf, APPKEY, 16);}
 
+
 /* ************************************************************** 
  * Pin mapping
  * *************************************************************/
@@ -41,33 +42,33 @@ const lmic_pinmap lmic_pins = {
    .dio = {3, 6, 5}, 
 };
 
-
-
 #include <RTCZero.h>
 RTCZero rtc;
+
 
 // show debug statements; comment next line to disable debug statements
 #define DEBUG
 
-#define VBATPIN A7
+// #define READ_A1
+// #define READ_A2
+// #define READ_A3
+// #define READ_A4
+// #define READ_A5
 
-#define ANALOGPIN A1 // read from analog pin 1 (not 0 as it is the DAC for M0)
+#define VBATPIN A7
 
 // data to send
 static uint8_t dataTX[52]; // max packet size
-enum payload_types 
-{
-  PAYLOAD_NONE,
-  PAYLOAD_BATT_ONLY,
-  PAYLOAD_BATT_SOIL,
-  PAYLOAD_BATT_AIR,
-  PAYLOAD_BATT_SOIL_AIR,
-  PAYLOAD_BATT_ANALOG,
-  PAYLOAD_BATT_ANALOG_SOIL,
-  PAYLOAD_BATT_ANALOG_AIR,
-  PAYLOAD_BATT_ANALOG_SOIL_AIR
-};
 
+const static uint16_t PAYLOAD_NONE   = 0;
+const static uint16_t PAYLOAD_BATT   = (1 << 0);
+const static uint16_t PAYLOAD_SOIL   = (1 << 1);
+const static uint16_t PAYLOAD_AIR    = (1 << 2);
+const static uint16_t PAYLOAD_ANALOG1 = (1 << 3);
+const static uint16_t PAYLOAD_ANALOG2 = (1 << 4);
+const static uint16_t PAYLOAD_ANALOG3 = (1 << 5);
+const static uint16_t PAYLOAD_ANALOG4 = (1 << 6);
+const static uint16_t PAYLOAD_ANALOG5 = (1 << 7);
 
 /* **************************************************************
  * user settings
@@ -79,7 +80,7 @@ enum payload_types
 unsigned long cycle = -1;  //  init at -1, so first cycle starts as cycle 0 for 1st sense/send
 unsigned long prevSleep = 0; 
 size_t datasize;
-payload_types payload_type = PAYLOAD_NONE;
+
 
 /* **************************************************************
  * sensor settings
@@ -94,6 +95,13 @@ payload_types payload_type = PAYLOAD_NONE;
 #define BME_MAX_PRES 1100
 
 #include <Wire.h>
+
+
+/* **************************************************************
+ * imports for the adalogger featherwing
+ * *************************************************************/
+// #include <RTClib.h>
+// RTC_PCF8523 adalogger;
 
 /* **************************************************************
  * I2C soil moisture sensor
@@ -125,28 +133,73 @@ void init_sensor() {
   delay(1000); // give some time to boot up
 }
 
+uint16_t read_Analog(uint8_t pin){
+  float analogMeasurement = analogRead(pin);
+  analogMeasurement *= 3300; // aref mV
+  analogMeasurement /= pow(2, 12); // max resolution of adc @ 12bits
+
+  return (uint16_t)(analogMeasurement);
+}
+
 void do_sense() {
+  uint16_t payload_type = PAYLOAD_NONE;
   memset(dataTX, 0, sizeof(dataTX)); // set dataTX to 0
-  size_t n = 1; // leave 0 for payload_type
+  size_t n = 2; // leave 0 and 1 for payload_type
   
-  dataTX[0] = PAYLOAD_BATT_ANALOG; // set payload type to battery and analog to begin with
-  analogReadResolution(12); // set the adc resolution even if the hardware doesnt support it
+  analogReadResolution(12); // set the adc resolution to 12 bits
 
   float analogBatt = analogRead(VBATPIN);
   analogBatt *= 2; // voltage divider for battery pin
   analogBatt *= 3300; // aref mV
-  analogBatt /= 4096; // max resolution of adc @ 12bits
+
+  analogBatt /= pow(2,12); // max resolution of adc @ 12bits
   uint16_t batt_mV = (uint16_t)analogBatt;
   dataTX[n++] = lowByte(batt_mV);
   dataTX[n++] = highByte(batt_mV);
+  payload_type |= PAYLOAD_BATT; // update payload flags
 
-  float analogMeasurement = analogRead(ANALOGPIN);
-  analogMeasurement *= 3300; // aref mV
-  analogMeasurement /= 4096; // max resolution of adc @ 12bits
-  uint16_t analog_mV = (uint16_t)(analogMeasurement);
-  dataTX[n++] = lowByte(analog_mV);
-  dataTX[n++] = highByte(analog_mV);
-  
+#ifdef READ_A1
+  uint16_t analog_mV1 = read_Analog(A1);
+  dataTX[n++] = lowByte(analog_mV1);
+  dataTX[n++] = highByte(analog_mV1);
+  payload_type |= PAYLOAD_ANALOG1; // update payload
+#endif
+
+#ifdef READ_A2
+  uint16_t analog_mV2 = read_Analog(A2);
+  dataTX[n++] = lowByte(analog_mV2);
+  dataTX[n++] = highByte(analog_mV2);
+  payload_type |= PAYLOAD_ANALOG2; // update payload
+#endif
+
+#ifdef READ_A3
+  uint16_t analog_mV3 = read_Analog(A3);
+  dataTX[n++] = lowByte(analog_mV3);
+  dataTX[n++] = highByte(analog_mV3);
+  payload_type |= PAYLOAD_ANALOG3; // update payload
+#endif
+
+#ifdef READ_A4
+  uint16_t analog_mV4 = read_Analog(A4);
+  dataTX[n++] = lowByte(analog_mV4);
+  dataTX[n++] = highByte(analog_mV4);
+  payload_type |= PAYLOAD_ANALOG4; // update payload
+#endif
+
+#ifdef READ_A5
+  uint16_t analog_mV5 = read_Analog(A5);
+  dataTX[n++] = lowByte(analog_mV5);
+  dataTX[n++] = highByte(analog_mV5);
+  payload_type |= PAYLOAD_ANALOG5; // update payload
+#endif
+
+#ifdef READ_A6
+  uint16_t analog_mV6 = read_Analog(A6);
+  dataTX[n++] = lowByte(analog_mV6);
+  dataTX[n++] = highByte(analog_mV6);
+  payload_type |= PAYLOAD_ANALOG6; // update payload
+#endif
+
   size_t tries = 0;
 
   if (bme.begin()){ // bme returns true when is successful and sensor exists.
@@ -175,7 +228,7 @@ void do_sense() {
       dataTX[n++] = highByte(payload_airPres);
       Serial.print(F("bme280 read success: "));
       Serial.println(air_tempC);
-      dataTX[0] = PAYLOAD_BATT_ANALOG_AIR;
+      payload_type |= PAYLOAD_AIR;
     }
   }
 
@@ -201,10 +254,12 @@ void do_sense() {
     dataTX[n++] = highByte(soil_moisture);
     Serial.print(F("chirp read success: "));
     Serial.println(soil_tempC);
-    if(dataTX[0] == PAYLOAD_BATT_ANALOG_AIR) dataTX[0] = PAYLOAD_BATT_ANALOG_SOIL_AIR; // set payload  type
-    else dataTX[0] = PAYLOAD_BATT_ANALOG_SOIL;
+    payload_type |= PAYLOAD_SOIL;
   } 
   datasize = n; // set the datasize so we know how much data to transmit.
+  // set the payload type
+  dataTX[0] = lowByte(payload_type);
+  dataTX[1] = highByte(payload_type);
 }
 
 void alarmMatch(){
@@ -369,8 +424,6 @@ void onEvent (ev_t ev) {
 void loop() {
   rtc.setTime(0, 0, 0);
   do_sense();
-
-  // // check if need to send
   do_send();
   do_sleep();  // sleep minus elapsed time
 }
@@ -384,7 +437,7 @@ void setup() {
 
   //Set baud rate
   Serial.begin(9600);
-  Serial.println(F("Lora soil moisture sensor node (template version: 13Jan2017 generated: 19Aug2019)"));
+  Serial.println(F("Lora sensor node"));
   pinMode(0, INPUT_PULLUP);
   pinMode(1, INPUT_PULLUP);
   pinMode(2, INPUT_PULLUP);
